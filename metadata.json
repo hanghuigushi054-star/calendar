@@ -1,0 +1,6 @@
+{
+  "name": "就活逆算スケジュールアシスタント",
+  "description": "企業からの案内や募集要項を解析し、目標日から逆算したスケジュールを自動成するアプリです。",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
