@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Calendar, Building2, Flag, ArrowRight, Loader2, AlertCircle, Info, Image as ImageIcon, Save, Trash2, List, Calendar as CalendarIcon, X, CheckCircle, Circle, GraduationCap, FileText, User } from 'lucide-react';
+import { Calendar, Building2, Flag, ArrowRight, Loader2, AlertCircle, Info, Image as ImageIcon, Save, Trash2, List, Calendar as CalendarIcon, X, CheckCircle, Circle, GraduationCap, FileText, User, Key, ExternalLink, Edit, Eye, EyeOff } from 'lucide-react';
 import { analyzeSchedule, ImageData } from './services/geminiService';
 import { AnalysisResult, ScheduleItem } from './types';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, startOfWeek, endOfWeek, isSameMonth, isSameDay, isToday, parseISO } from 'date-fns';
@@ -36,9 +36,13 @@ export default function App() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Data Modal State
+  const [editingCompany, setEditingCompany] = useState<AnalysisResult | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+
   // Calendar State
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [selectedDateTasks, setSelectedDateTasks] = useState<{task: ScheduleItem, company: string, isPast: boolean, scheduleId: string}[] | null>(null);
+  const [selectedDateTasks, setSelectedDateTasks] = useState<{task: ScheduleItem, company: string, isPast: boolean, scheduleId: string, companyData: AnalysisResult}[] | null>(null);
 
   // Load saved data on init
   useEffect(() => {
@@ -141,7 +145,11 @@ export default function App() {
       ...result,
       id: Math.random().toString(36).substr(2, 9),
       createdAt: Date.now(),
-      schedule: result.schedule.map(s => ({...s, id: Math.random().toString(36).substr(2, 9), isCompleted: false}))
+      schedule: result.schedule.map(s => ({...s, id: Math.random().toString(36).substr(2, 9), isCompleted: false})),
+      status: '準備中',
+      myPageUrl: '',
+      loginId: '',
+      password: ''
     };
     
     const updated = [recordToSave, ...savedSchedules];
@@ -153,6 +161,24 @@ export default function App() {
     setEmailText('');
     removeImage();
     setActiveTab('calendar');
+  };
+
+  const getStatusBadge = (status?: string) => {
+    switch(status) {
+      case '準備中': return 'bg-slate-100 text-slate-600 border-slate-200';
+      case '書類選考中': return 'bg-blue-50 text-blue-600 border-blue-200';
+      case '面接選考中': return 'bg-indigo-50 text-indigo-600 border-indigo-200';
+      case '内定': return 'bg-emerald-50 text-emerald-600 border-emerald-200';
+      case '終了': return 'bg-slate-100 text-slate-400 border-slate-200';
+      default: return 'bg-slate-100 text-slate-600 border-slate-200';
+    }
+  };
+
+  const saveCompanyInfo = (updatedCompany: AnalysisResult) => {
+    const updated = savedSchedules.map(c => c.id === updatedCompany.id ? updatedCompany : c);
+    setSavedSchedules(updated);
+    localStorage.setItem('schedules', JSON.stringify(updated));
+    setEditingCompany(null);
   };
 
   const deleteSchedule = (id: string) => {
@@ -192,6 +218,30 @@ export default function App() {
     }
   };
 
+  const updateTaskDate = (scheduleId: string, taskId: string, newDate: string) => {
+    if (!newDate) return;
+    const updated = savedSchedules.map(ss => {
+      if (ss.id === scheduleId) {
+        return {
+          ...ss,
+          schedule: ss.schedule.map(t => t.id === taskId ? { ...t, date: newDate } : t)
+        };
+      }
+      return ss;
+    });
+    setSavedSchedules(updated);
+    localStorage.setItem('schedules', JSON.stringify(updated));
+    
+    if (selectedDateTasks) {
+      setSelectedDateTasks(selectedDateTasks.map(t => {
+        if (t.scheduleId === scheduleId && t.task.id === taskId) {
+          return { ...t, task: { ...t.task, date: newDate } };
+        }
+        return t;
+      }));
+    }
+  };
+
   // Calendar Logic
   const monthStart = startOfMonth(currentDate);
   const monthEnd = endOfMonth(monthStart);
@@ -213,7 +263,8 @@ export default function App() {
     s.schedule.map(item => ({
       task: item,
       company: s.companyName,
-      scheduleId: s.id!
+      scheduleId: s.id!,
+      companyData: s
     }))
   );
 
@@ -522,17 +573,37 @@ export default function App() {
                     <p className="text-sm text-slate-500 p-4 text-center bg-slate-50 rounded-xl border border-dashed border-slate-200">登録された選考はありません</p>
                  ) : (
                     <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2">
-                       {savedSchedules.map(sched => (
-                         <div key={sched.id} className="p-3 border border-slate-200 rounded-xl hover:border-indigo-300 transition-colors group relative bg-slate-50">
-                            <button 
-                               onClick={() => deleteSchedule(sched.id!)}
-                               className="absolute top-2 right-2 p-1.5 bg-white rounded-md text-slate-400 opacity-0 group-hover:opacity-100 hover:text-red-500 hover:bg-red-50 transition-all border border-slate-100 shadow-sm"
-                               title="削除"
-                            >
-                               <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                            <h4 className="font-bold text-sm text-slate-900 pr-8 leading-tight">{sched.companyName}</h4>
-                            <p className="text-xs text-slate-500 mt-1 flex items-center gap-1"><Flag className="w-3 h-3"/> 目標: {sched.targetDate}</p>
+                        {savedSchedules.map(sched => (
+                         <div key={sched.id} className="p-3 border border-slate-200 rounded-xl hover:border-indigo-300 transition-colors group relative bg-white shadow-sm flex flex-col gap-2">
+                            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 transition-all">
+                               <button 
+                                  onClick={() => { setEditingCompany(sched); setShowPassword(false); }}
+                                  className="p-1.5 bg-white rounded-md text-slate-400 hover:text-indigo-500 hover:bg-indigo-50 transition-all border border-slate-100 shadow-sm"
+                                  title="編集・ログイン情報"
+                               >
+                                  <Edit className="w-3.5 h-3.5" />
+                               </button>
+                               <button 
+                                  onClick={() => deleteSchedule(sched.id!)}
+                                  className="p-1.5 bg-white rounded-md text-slate-400 hover:text-red-500 hover:bg-red-50 transition-all border border-slate-100 shadow-sm"
+                                  title="削除"
+                               >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                               </button>
+                            </div>
+                            
+                            <div className="pr-16">
+                               <h4 className="font-bold text-sm text-slate-900 leading-tight line-clamp-2">{sched.companyName}</h4>
+                            </div>
+                            
+                            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                               <span className={`text-[10px] px-2 py-0.5 rounded border font-bold whitespace-nowrap ${getStatusBadge(sched.status)}`}>{sched.status || '準備中'}</span>
+                            </div>
+                            {sched.myPageUrl && (
+                                <a href={sched.myPageUrl.startsWith('http') ? sched.myPageUrl : `https://${sched.myPageUrl}`} target="_blank" rel="noopener noreferrer" className="text-[10px] text-indigo-500 hover:text-indigo-600 flex items-center gap-1 font-medium mt-0.5 w-max" title="マイページへ">
+                                    <ExternalLink className="w-3 h-3"/> マイページ
+                                </a>
+                            )}
                          </div>
                        ))}
                     </div>
@@ -604,11 +675,20 @@ export default function App() {
 
                          {/* Task Indicators */}
                          <div className="mt-2 space-y-1">
-                           {dayTasks.slice(0, 3).map((taskData, idx) => (
-                             <div key={idx} className={`truncate text-[10px] sm:text-xs font-medium px-1.5 py-0.5 border rounded leading-tight ${taskData.task.isCompleted ? 'bg-slate-100 text-slate-400 border-transparent line-through' : 'bg-indigo-50 text-indigo-700 border-indigo-100'}`}>
-                               {taskData.company}
-                             </div>
-                           ))}
+                           {dayTasks.slice(0, 3).map((taskData, idx) => {
+                             let statusColor = "bg-indigo-400";
+                             if (taskData.companyData.status === '書類選考中') statusColor = "bg-blue-400";
+                             else if (taskData.companyData.status === '面接選考中') statusColor = "bg-purple-400";
+                             else if (taskData.companyData.status === '内定') statusColor = "bg-emerald-400";
+                             else if (taskData.companyData.status === '終了') statusColor = "bg-slate-400";
+
+                             return (
+                               <div key={idx} className={`flex items-center gap-1 overflow-hidden text-[10px] sm:text-xs font-medium px-1.5 py-0.5 border rounded leading-tight ${taskData.task.isCompleted ? 'bg-slate-100 text-slate-400 border-transparent line-through' : 'bg-white text-slate-700 border-slate-200'}`}>
+                                 {!taskData.task.isCompleted && <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${statusColor}`} />}
+                                 <span className="truncate">{taskData.company} - {taskData.task.task}</span>
+                               </div>
+                             );
+                           })}
                            {dayTasks.length > 3 && (
                              <div className="text-[10px] text-slate-400 font-medium pl-1 mt-1">他 {dayTasks.length - 3}件...</div>
                            )}
@@ -710,6 +790,86 @@ export default function App() {
 
       </main>
 
+      {/* Edit Company Modal */}
+      {editingCompany && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in" onClick={() => setEditingCompany(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 flex-shrink-0">
+               <h3 className="font-bold text-lg text-slate-900 flex items-center gap-2">
+                  <Building2 className="w-5 h-5 text-indigo-500"/>
+                  企業情報の編集
+               </h3>
+               <button onClick={() => setEditingCompany(null)} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-200 rounded-full transition-colors">
+                  <X className="w-5 h-5" />
+               </button>
+            </div>
+            <div className="p-6 space-y-5 overflow-y-auto">
+               <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1.5">企業名</label>
+                  <input type="text" value={editingCompany.companyName} onChange={e => setEditingCompany({...editingCompany, companyName: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+               </div>
+               <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1.5">選考状況</label>
+                  <select value={editingCompany.status || '準備中'} onChange={e => setEditingCompany({...editingCompany, status: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none bg-white">
+                     <option value="準備中">準備中</option>
+                     <option value="書類選考中">書類選考中</option>
+                     <option value="面接選考中">面接選考中</option>
+                     <option value="内定">内定</option>
+                     <option value="終了">終了</option>
+                  </select>
+               </div>
+               
+               <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl space-y-4">
+                   <h4 className="font-bold text-sm text-slate-700 flex items-center gap-2 mb-2"><Key className="w-4 h-4 text-slate-400"/> ログイン情報 (マイページ)</h4>
+                   <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">URL</label>
+                      <input type="url" placeholder="https://" value={editingCompany.myPageUrl || ''} onChange={e => setEditingCompany({...editingCompany, myPageUrl: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                   </div>
+                   <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">ログインＩＤ</label>
+                      <input type="text" placeholder="user@example.com" value={editingCompany.loginId || ''} onChange={e => setEditingCompany({...editingCompany, loginId: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none" />
+                   </div>
+                   <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">パスワード</label>
+                      <div className="relative">
+                          <input type={showPassword ? "text" : "password"} value={editingCompany.password || ''} onChange={e => setEditingCompany({...editingCompany, password: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none pr-10" />
+                          <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600">
+                             {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                          </button>
+                      </div>
+                  </div>
+               </div>
+               
+                <div className="bg-slate-50 p-4 border border-slate-200 rounded-xl space-y-4 mt-6">
+                   <h4 className="font-bold text-sm text-slate-700 flex items-center gap-2 mb-2"><FileText className="w-4 h-4 text-slate-400"/> メモ・感想</h4>
+                   
+                   <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">説明会の感想・メモ</label>
+                      <textarea placeholder="人事の雰囲気が良かった..." value={editingCompany.impressionInfoSession || ''} onChange={e => setEditingCompany({...editingCompany, impressionInfoSession: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-y min-h-[80px]" />
+                   </div>
+                   <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">ESの設問・提出した内容</label>
+                      <textarea placeholder="Q: 学生時代に力を入れたこと..." value={editingCompany.impressionES || ''} onChange={e => setEditingCompany({...editingCompany, impressionES: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-y min-h-[80px]" />
+                   </div>
+                   <div>
+                      <label className="block text-xs font-bold text-slate-600 mb-1">Webテストの形式・手応え</label>
+                      <textarea placeholder="玉手箱形式。言語は概ね解けた..." value={editingCompany.impressionWebTest || ''} onChange={e => setEditingCompany({...editingCompany, impressionWebTest: e.target.value})} className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 outline-none resize-y min-h-[80px]" />
+                   </div>
+               </div>
+               
+            </div>
+            <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+               <button onClick={() => setEditingCompany(null)} className="px-4 py-2 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium hover:bg-slate-100 transition-colors bg-white">
+                  キャンセル
+               </button>
+               <button onClick={() => saveCompanyInfo(editingCompany)} className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm">
+                  保存する
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Selected Date Modal */}
       {selectedDateTasks && (
          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm animate-in fade-in cursor-pointer duration-200" onClick={() => setSelectedDateTasks(null)}>
@@ -725,7 +885,7 @@ export default function App() {
                </div>
                <div className="p-6 overflow-y-auto bg-white flex-1 space-y-4">
                   {selectedDateTasks.map((t, i) => (
-                     <div key={i} className={`p-4 rounded-xl border flex gap-4 ${t.task.isCompleted ? 'bg-slate-50 border-slate-200 opacity-60' : t.isPast ? 'bg-amber-50/30 border-amber-200 opacity-90' : 'bg-indigo-50/30 border-indigo-100 shadow-sm'}`}>
+                     <div key={i} className={`p-4 rounded-xl border flex gap-4 transition-all ${t.task.isCompleted ? 'bg-slate-50 border-slate-200 opacity-60' : t.isPast ? 'bg-amber-50/30 border-amber-200' : 'bg-indigo-50/30 border-indigo-100 shadow-sm'}`}>
                         <button onClick={() => toggleTaskCompletion(t.scheduleId, t.task.id!)} className="mt-1 flex-shrink-0 focus:outline-none group">
                            {t.task.isCompleted ? (
                               <CheckCircle className="w-6 h-6 text-emerald-500 transition-transform group-active:scale-95" />
@@ -733,13 +893,44 @@ export default function App() {
                               <Circle className={`w-6 h-6 transition-transform group-hover:scale-105 group-active:scale-95 ${t.isPast ? 'text-amber-400' : 'text-slate-300 hover:text-indigo-400'}`} />
                            )}
                         </button>
-                        <div className="flex-1">
-                           <div className="flex flex-wrap gap-2 items-center mb-2">
-                              <span className="bg-white border border-slate-200 px-2 py-0.5 rounded text-xs font-bold text-slate-600 shadow-sm">{t.company}</span>
-                              {!t.task.isCompleted && t.isPast && <span className="text-xs text-amber-600 font-bold bg-amber-100 px-2 py-0.5 rounded border border-amber-200">期限切れ</span>}
+                        <div className="flex-1 min-w-0">
+                           <div className="flex flex-wrap gap-2 items-center justify-between mb-2">
+                              <div className="flex flex-wrap gap-2 items-center">
+                                 <span className="bg-white border border-slate-200 px-2 py-0.5 rounded text-xs font-bold text-slate-600 shadow-sm flex items-center gap-1"><Building2 className="w-3 h-3"/> {t.company}</span>
+                                 <span className={`text-[10px] px-2 py-0.5 rounded border font-bold whitespace-nowrap ${getStatusBadge(t.companyData.status)}`}>{t.companyData.status || '準備中'}</span>
+                                 {!t.task.isCompleted && t.isPast && <span className="text-xs text-amber-600 font-bold bg-amber-100 px-2 py-0.5 rounded border border-amber-200">期限切れ</span>}
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <input 
+                                  type="date"
+                                  value={t.task.date}
+                                  onChange={(e) => updateTaskDate(t.scheduleId, t.task.id!, e.target.value)}
+                                  className="text-[10px] sm:text-xs text-slate-600 border border-slate-200 rounded px-1.5 py-0.5 bg-white focus:ring-1 focus:ring-indigo-500 outline-none"
+                                />
+                                <button 
+                                  onClick={() => {
+                                    setSelectedDateTasks(null);
+                                    setEditingCompany(t.companyData); 
+                                    setShowPassword(false);
+                                  }}
+                                  className="text-[10px] sm:text-xs text-indigo-600 hover:bg-indigo-50 border border-transparent hover:border-indigo-100 px-2 py-1 rounded transition-colors flex items-center gap-1 font-medium whitespace-nowrap"
+                                >
+                                  <Edit className="w-3 h-3" /> メモ
+                                </button>
+                              </div>
                            </div>
                            <h4 className={`font-bold leading-tight mb-1.5 text-base transition-colors ${t.task.isCompleted ? 'text-slate-500 line-through' : 'text-slate-900'}`}>{t.task.task}</h4>
                            <p className={`text-sm leading-relaxed ${t.task.isCompleted ? 'text-slate-400' : 'text-slate-600'}`}>{t.task.description}</p>
+                           
+                           {/* Quick preview of impressions if any exist */}
+                           {(t.companyData.impressionInfoSession || t.companyData.impressionES || t.companyData.impressionWebTest) && !t.task.isCompleted && (
+                              <div className="mt-3 pt-3 border-t border-slate-200/60 text-ellipsis bg-white/50 p-2 rounded-lg text-[11px] sm:text-xs text-slate-600 border border-slate-100">
+                                 <p className="font-bold text-slate-700 mb-1 flex items-center gap-1"><FileText className="w-3 h-3"/> 選考メモ (抜粋)</p>
+                                 <p className="line-clamp-2">
+                                    {t.companyData.impressionES || t.companyData.impressionInfoSession || t.companyData.impressionWebTest}
+                                 </p>
+                              </div>
+                           )}
                         </div>
                      </div>
                   ))}
